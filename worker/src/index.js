@@ -53,7 +53,7 @@ export default {
 
       return jsonResponse({ error: 'Not found' }, origin, 404);
     } catch (err) {
-      console.error('Unhandled error:', err);
+      console.error('Unhandled error:', err.message, err.stack);
       return jsonResponse({ error: 'Internal server error' }, origin, 500);
     }
   },

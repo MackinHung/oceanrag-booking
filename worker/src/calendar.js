@@ -106,11 +106,10 @@ export async function createBooking(booking, env) {
     description,
     start: { dateTime: startDt, timeZone: tz },
     end: { dateTime: endDt, timeZone: tz },
-    attendees: [{ email }],
   };
 
   const res = await fetch(
-    `${CALENDAR_API}/calendars/${encodeURIComponent(env.CALENDAR_ID)}/events?sendUpdates=all`,
+    `${CALENDAR_API}/calendars/${encodeURIComponent(env.CALENDAR_ID)}/events`,
     {
       method: 'POST',
       headers: {
