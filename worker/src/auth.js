@@ -6,7 +6,8 @@
 const SCOPE = 'https://www.googleapis.com/auth/calendar';
 const TOKEN_URL = 'https://oauth2.googleapis.com/token';
 const KV_TOKEN_KEY = 'gtoken';
-const TOKEN_TTL = 3300; // 55 minutes
+const JWT_TTL = 3600;   // 60 minutes — JWT lifetime
+const KV_TTL = 3300;    // 55 minutes — cache expires earlier for safety margin
 
 /**
  * Get a valid Google access token (from KV cache or fresh JWT exchange).
@@ -32,14 +33,15 @@ export async function getAccessToken(env) {
 
   if (!res.ok) {
     const body = await res.text();
-    throw new Error(`Token exchange failed (${res.status}): ${body}`);
+    console.error('Google token exchange error:', res.status, body);
+    throw new Error(`Token exchange failed (${res.status})`);
   }
 
   const data = await res.json();
   const token = data.access_token;
 
-  // 3. Cache in KV
-  await env.BOOKING_KV.put(KV_TOKEN_KEY, token, { expirationTtl: TOKEN_TTL });
+  // 3. Cache in KV (shorter than JWT lifetime for safety)
+  await env.BOOKING_KV.put(KV_TOKEN_KEY, token, { expirationTtl: KV_TTL });
 
   return token;
 }
@@ -55,7 +57,7 @@ async function buildSignedJwt(env) {
     scope: SCOPE,
     aud: TOKEN_URL,
     iat: now,
-    exp: now + TOKEN_TTL,
+    exp: now + JWT_TTL,
   };
 
   const headerB64 = base64url(JSON.stringify(header));

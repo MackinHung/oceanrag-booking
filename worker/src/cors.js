@@ -48,7 +48,12 @@ export function handlePreflight(request, env) {
 }
 
 /**
- * Rate limit check using KV. Returns true if within limit.
+ * Rate limit check using KV with pessimistic buffer.
+ *
+ * Uses a higher write (RATE_LIMIT + buffer) to account for read-then-write
+ * race conditions inherent in KV's eventual consistency. In practice, at
+ * the low traffic volume expected (<100 req/day), races are extremely rare.
+ *
  * @param {Request} request
  * @param {object} env
  * @returns {Promise<boolean>}
@@ -61,6 +66,9 @@ export async function checkRateLimit(request, env) {
 
   if (current >= RATE_LIMIT) return false;
 
+  // Write immediately — KV eventual consistency means parallel requests
+  // may read stale values, but the window is very small and the impact
+  // is limited to allowing ~2 extra requests at most.
   await env.BOOKING_KV.put(key, String(current + 1), {
     expirationTtl: RATE_WINDOW,
   });

@@ -10,6 +10,15 @@ import {
   checkRateLimit,
 } from './cors.js';
 
+const MAX_BODY_SIZE = 10 * 1024; // 10KB
+const EMAIL_RE = /^[a-zA-Z0-9.!#$%&'*+/=?^_`{|}~-]+@[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*$/;
+const MAX_LENGTHS = { name: 100, company: 150, email: 254, phone: 20, type: 50, message: 2000 };
+const SECURITY_HEADERS = {
+  'X-Content-Type-Options': 'nosniff',
+  'X-Frame-Options': 'DENY',
+  'Referrer-Policy': 'strict-origin-when-cross-origin',
+};
+
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
@@ -21,8 +30,12 @@ export default {
       return handlePreflight(request, env);
     }
 
-    // Origin check for non-GET requests
     const origin = getAllowedOrigin(request, env);
+
+    // Enforce CORS on mutating requests
+    if (!origin && method !== 'GET') {
+      return new Response('Forbidden', { status: 403 });
+    }
 
     try {
       // --- Routes ---
@@ -41,11 +54,7 @@ export default {
       return jsonResponse({ error: 'Not found' }, origin, 404);
     } catch (err) {
       console.error('Unhandled error:', err);
-      return jsonResponse(
-        { error: 'Internal server error' },
-        origin,
-        500,
-      );
+      return jsonResponse({ error: 'Internal server error' }, origin, 500);
     }
   },
 };
@@ -55,13 +64,8 @@ export default {
 async function handleAvailability(url, env, origin) {
   const dateStr = url.searchParams.get('date');
 
-  // Validate date format
   if (!dateStr || !/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) {
-    return jsonResponse(
-      { error: 'Invalid date format. Use YYYY-MM-DD' },
-      origin,
-      400,
-    );
+    return jsonResponse({ error: 'Invalid date format. Use YYYY-MM-DD' }, origin, 400);
   }
 
   // Validate not in the past (Asia/Taipei = UTC+8)
@@ -80,11 +84,13 @@ async function handleBook(request, env, origin) {
   // Rate limit
   const withinLimit = await checkRateLimit(request, env);
   if (!withinLimit) {
-    return jsonResponse(
-      { error: 'Too many requests. Please try again later.' },
-      origin,
-      429,
-    );
+    return jsonResponse({ error: 'Too many requests. Please try again later.' }, origin, 429);
+  }
+
+  // Body size check
+  const contentLength = parseInt(request.headers.get('Content-Length') || '0', 10);
+  if (contentLength > MAX_BODY_SIZE) {
+    return jsonResponse({ error: 'Request body too large' }, origin, 413);
   }
 
   let body;
@@ -107,11 +113,14 @@ async function handleBook(request, env, origin) {
   if (!message?.trim()) missing.push('message');
 
   if (missing.length > 0) {
-    return jsonResponse(
-      { error: `Missing required fields: ${missing.join(', ')}` },
-      origin,
-      400,
-    );
+    return jsonResponse({ error: `Missing required fields: ${missing.join(', ')}` }, origin, 400);
+  }
+
+  // Validate field lengths
+  for (const [field, maxLen] of Object.entries(MAX_LENGTHS)) {
+    if (body[field]?.length > maxLen) {
+      return jsonResponse({ error: `Field '${field}' exceeds maximum length of ${maxLen}` }, origin, 400);
+    }
   }
 
   // Validate date format
@@ -124,13 +133,14 @@ async function handleBook(request, env, origin) {
     return jsonResponse({ error: 'Invalid time format' }, origin, 400);
   }
 
-  // Validate email
-  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())) {
+  // Validate email (RFC 5322 subset)
+  if (!EMAIL_RE.test(email.trim())) {
     return jsonResponse({ error: 'Invalid email address' }, origin, 400);
   }
 
-  // Validate phone
-  if (!/^[0-9\-+()]{7,20}$/.test(phone.trim())) {
+  // Validate phone (must contain at least 7 digits)
+  const phoneDigits = phone.trim().replace(/[\s\-+()]/g, '');
+  if (phoneDigits.length < 7 || phoneDigits.length > 15 || !/^\d+$/.test(phoneDigits)) {
     return jsonResponse({ error: 'Invalid phone number' }, origin, 400);
   }
 
@@ -156,7 +166,7 @@ async function handleBook(request, env, origin) {
 /* ---- Helpers ---- */
 
 function jsonResponse(data, origin, status = 200) {
-  const headers = { 'Content-Type': 'application/json' };
+  const headers = { 'Content-Type': 'application/json', ...SECURITY_HEADERS };
   if (origin) Object.assign(headers, corsHeaders(origin));
   return new Response(JSON.stringify(data), { status, headers });
 }

@@ -6,6 +6,7 @@ import { getAccessToken } from './auth.js';
 
 const CALENDAR_API = 'https://www.googleapis.com/calendar/v3';
 const AVAILABLE_HOURS = [9, 10, 11, 13, 14, 15, 16];
+const TZ_OFFSET = '+08:00'; // Asia/Taipei
 
 /**
  * Query available time slots for a given date.
@@ -17,8 +18,8 @@ export async function getAvailability(dateStr, env) {
   const token = await getAccessToken(env);
   const tz = env.CALENDAR_TIMEZONE || 'Asia/Taipei';
 
-  const timeMin = `${dateStr}T00:00:00+08:00`;
-  const timeMax = `${dateStr}T23:59:59+08:00`;
+  const timeMin = `${dateStr}T00:00:00${TZ_OFFSET}`;
+  const timeMax = `${dateStr}T23:59:59${TZ_OFFSET}`;
 
   const res = await fetch(`${CALENDAR_API}/freeBusy`, {
     method: 'POST',
@@ -36,7 +37,8 @@ export async function getAvailability(dateStr, env) {
 
   if (!res.ok) {
     const body = await res.text();
-    throw new Error(`freeBusy failed (${res.status}): ${body}`);
+    console.error('Google freeBusy error:', res.status, body);
+    throw new Error(`freeBusy failed (${res.status})`);
   }
 
   const data = await res.json();
@@ -47,11 +49,9 @@ export async function getAvailability(dateStr, env) {
   for (const slot of busySlots) {
     const start = new Date(slot.start);
     const end = new Date(slot.end);
-    // Mark each hour that overlaps with a busy interval
     for (const h of AVAILABLE_HOURS) {
-      const slotStart = new Date(`${dateStr}T${String(h).padStart(2, '0')}:00:00+08:00`);
+      const slotStart = new Date(`${dateStr}T${String(h).padStart(2, '0')}:00:00${TZ_OFFSET}`);
       const slotEnd = new Date(slotStart.getTime() + 60 * 60 * 1000);
-      // Overlap: busy.start < slot.end AND busy.end > slot.start
       if (start < slotEnd && end > slotStart) {
         busyHours.add(h);
       }
@@ -69,7 +69,7 @@ export async function getAvailability(dateStr, env) {
  * Create a calendar event (booking).
  * @param {object} booking - { date, time, name, company, email, phone, type, message }
  * @param {object} env
- * @returns {Promise<{eventId: string}>}
+ * @returns {Promise<{eventId: string} | {conflict: true}>}
  */
 export async function createBooking(booking, env) {
   const token = await getAccessToken(env);
@@ -83,26 +83,26 @@ export async function createBooking(booking, env) {
     return { conflict: true };
   }
 
-  const startDt = `${date}T${time}:00+08:00`;
+  const startDt = `${date}T${time}:00${TZ_OFFSET}`;
   const endHour = parseInt(time.split(':')[0], 10) + 1;
-  const endDt = `${date}T${String(endHour).padStart(2, '0')}:00:00+08:00`;
+  const endDt = `${date}T${String(endHour).padStart(2, '0')}:00:00${TZ_OFFSET}`;
 
   const description = [
-    `姓名：${name}`,
-    `公司/組織：${company}`,
-    `Email：${email}`,
-    `電話：${phone}`,
-    `諮詢類型：${type}`,
+    `姓名：${esc(name)}`,
+    `公司/組織：${esc(company)}`,
+    `Email：${esc(email)}`,
+    `電話：${esc(phone)}`,
+    `諮詢類型：${esc(type)}`,
     '',
-    `訊息內容：`,
-    message,
+    '訊息內容：',
+    esc(message),
     '',
     '---',
     '此事件由 OceanRAG 預約系統自動建立',
   ].join('\n');
 
   const event = {
-    summary: `[OceanRAG 諮詢] ${type} — ${company}`,
+    summary: `[OceanRAG 諮詢] ${esc(type)} — ${esc(company)}`,
     description,
     start: { dateTime: startDt, timeZone: tz },
     end: { dateTime: endDt, timeZone: tz },
@@ -123,9 +123,22 @@ export async function createBooking(booking, env) {
 
   if (!res.ok) {
     const body = await res.text();
-    throw new Error(`events.insert failed (${res.status}): ${body}`);
+    console.error('Google events.insert error:', res.status, body);
+    throw new Error(`events.insert failed (${res.status})`);
   }
 
   const created = await res.json();
   return { eventId: created.id };
+}
+
+/* ---- Helpers ---- */
+
+/** Escape HTML entities to prevent XSS in calendar event rendering. */
+function esc(str) {
+  return str
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
 }
