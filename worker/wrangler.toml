@@ -1,0 +1,17 @@
+name = "oceanrag-booking"
+main = "src/index.js"
+compatibility_date = "2026-03-16"
+
+[[kv_namespaces]]
+binding = "BOOKING_KV"
+id = "<REPLACE_WITH_KV_NAMESPACE_ID>"
+
+[vars]
+CALENDAR_TIMEZONE = "Asia/Taipei"
+ALLOWED_ORIGINS = "https://oceanrag.pages.dev"
+NOTIFICATION_EMAIL = "mackinhung@gmail.com"
+
+# Secrets (set via `wrangler secret put`):
+# GOOGLE_SERVICE_ACCOUNT_EMAIL
+# GOOGLE_PRIVATE_KEY
+# CALENDAR_ID
